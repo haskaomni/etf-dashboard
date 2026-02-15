@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ETF 核心持仓追踪面板</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .glow-green { text-shadow: 0 0 8px rgba(34,197,94,0.4); }
+    .glow-red { text-shadow: 0 0 8px rgba(239,68,68,0.4); }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+
+  <!-- Header -->
+  <header class="border-b border-gray-800 px-6 py-4">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-white">📊 ETF 核心持仓追踪</h1>
+        <p class="text-sm text-gray-400 mt-1">COPX · GRID · SMH — 实时数据来自 Yahoo Finance</p>
+      </div>
+      <div class="flex items-center gap-4">
+        <select id="timeRange" class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="5d">5天</option>
+          <option value="1mo" selected>1个月</option>
+          <option value="3mo">3个月</option>
+          <option value="6mo">6个月</option>
+          <option value="1y">1年</option>
+          <option value="ytd">今年至今</option>
+        </select>
+        <button onclick="refreshAll()" class="bg-blue-600 hover:bg-blue-500 px-4 py-1.5 rounded-lg text-sm font-medium transition">
+          刷新数据
+        </button>
+        <span id="lastUpdate" class="text-xs text-gray-500"></span>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-6 space-y-8">
+
+    <!-- ETF Overview Cards -->
+    <section id="etfCards" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <!-- Populated by JS -->
+    </section>
+
+    <!-- ETF Charts -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+        <h3 class="text-sm font-medium text-gray-400 mb-2">COPX 铜矿ETF</h3>
+        <canvas id="chart-COPX" height="160"></canvas>
+      </div>
+      <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+        <h3 class="text-sm font-medium text-gray-400 mb-2">GRID 智能电网ETF</h3>
+        <canvas id="chart-GRID" height="160"></canvas>
+      </div>
+      <div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
+        <h3 class="text-sm font-medium text-gray-400 mb-2">SMH 半导体ETF</h3>
+        <canvas id="chart-SMH" height="160"></canvas>
+      </div>
+    </section>
+
+    <!-- Holdings Tables -->
+    <section id="holdingsSection" class="space-y-6">
+      <!-- Populated by JS -->
+    </section>
+
+  </main>
+
+  <script>
+    const PROXY = 'https://query1.finance.yahoo.com/v8/finance/chart/';
+
+    const ETF_CONFIG = {
+      COPX: {
+        name: '铜矿ETF',
+        fullName: 'Global X Copper Miners',
+        color: '#f97316',
+        holdings: [
+          { symbol: 'FCX', name: 'Freeport-McMoRan', weight: 12.5 },
+          { symbol: 'SCCO', name: 'Southern Copper', weight: 8.2 },
+          { symbol: 'TECK', name: 'Teck Resources', weight: 6.8 },
+          { symbol: 'HBM', name: 'Hudbay Minerals', weight: 5.1 },
+          { symbol: 'IVPAF', name: 'Ivanhoe Mines', weight: 4.9 },
+          { symbol: 'FM.TO', name: 'First Quantum', weight: 4.5 },
+        ]
+      },
+      GRID: {
+        name: '智能电网ETF',
+        fullName: 'First Trust Clean Edge Smart Grid',
+        color: '#22c55e',
+        holdings: [
+          { symbol: 'ETN', name: 'Eaton Corp', weight: 9.8 },
+          { symbol: 'EMR', name: 'Emerson Electric', weight: 7.2 },
+          { symbol: 'ENPH', name: 'Enphase Energy', weight: 5.5 },
+          { symbol: 'ON', name: 'ON Semiconductor', weight: 5.1 },
+          { symbol: 'ABB', name: 'ABB Ltd', weight: 4.8 },
+          { symbol: 'GNRC', name: 'Generac Holdings', weight: 4.2 },
+        ]
+      },
+      SMH: {
+        name: '半导体ETF',
+        fullName: 'VanEck Semiconductor',
+        color: '#3b82f6',
+        holdings: [
+          { symbol: 'NVDA', name: 'NVIDIA', weight: 20.1 },
+          { symbol: 'TSM', name: 'TSMC', weight: 12.3 },
+          { symbol: 'AVGO', name: 'Broadcom', weight: 8.5 },
+          { symbol: 'AMD', name: 'AMD', weight: 5.8 },
+          { symbol: 'QCOM', name: 'Qualcomm', weight: 4.9 },
+          { symbol: 'TXN', name: 'Texas Instruments', weight: 4.7 },
+          { symbol: 'MU', name: 'Micron', weight: 4.2 },
+          { symbol: 'INTC', name: 'Intel', weight: 3.8 },
+          { symbol: 'AMAT', name: 'Applied Materials', weight: 3.5 },
+          { symbol: 'ASML', name: 'ASML', weight: 3.2 },
+        ]
+      }
+    };
+
+    const charts = {};
+    let cachedData = {};
+
+    async function fetchChart(symbol, range = '1mo') {
+      const interval = ['5d'].includes(range) ? '1h' : '1d';
+      try {
+        const resp = await fetch(`${PROXY}${symbol}?range=${range}&interval=${interval}`, {
+          headers: { 'User-Agent': 'Mozilla/5.0' }
+        });
+        const data = await resp.json();
+        return data.chart.result[0];
+      } catch (e) {
+        console.error(`Failed to fetch ${symbol}:`, e);
+        return null;
+      }
+    }
+
+    function formatPrice(p) {
+      if (p == null) return '—';
+      return p >= 1000 ? p.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})
+                       : p.toFixed(2);
+    }
+
+    function formatChange(price, prevClose) {
+      if (!price || !prevClose) return { text: '—', pct: '—', positive: true };
+      const diff = price - prevClose;
+      const pct = (diff / prevClose * 100);
+      return {
+        text: (diff >= 0 ? '+' : '') + diff.toFixed(2),
+        pct: (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%',
+        positive: diff >= 0
+      };
+    }
+
+    function renderETFCards(etfData) {
+      const container = document.getElementById('etfCards');
+      container.innerHTML = '';
+      for (const [symbol, config] of Object.entries(ETF_CONFIG)) {
+        const d = etfData[symbol];
+        if (!d) continue;
+        const meta = d.meta;
+        const change = formatChange(meta.regularMarketPrice, meta.chartPreviousClose);
+        const colorClass = change.positive ? 'text-green-400 glow-green' : 'text-red-400 glow-red';
+        const arrow = change.positive ? '▲' : '▼';
+
+        container.innerHTML += `
+          <div class="bg-gray-900 rounded-xl p-5 border border-gray-800 hover:border-gray-600 transition">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <span class="text-lg font-bold text-white">${symbol}</span>
+                <span class="text-xs text-gray-500 ml-2">${config.fullName}</span>
+              </div>
+              <span class="text-xs px-2 py-0.5 rounded-full" style="background:${config.color}20; color:${config.color}">${config.name}</span>
+            </div>
+            <div class="flex items-end justify-between">
+              <div>
+                <span class="text-3xl font-bold text-white">$${formatPrice(meta.regularMarketPrice)}</span>
+                <div class="mt-1 ${colorClass} text-sm font-medium">
+                  ${arrow} ${change.text} (${change.pct})
+                </div>
+              </div>
+              <div class="text-right text-xs text-gray-500">
+                <div>52周高: $${formatPrice(meta.fiftyTwoWeekHigh)}</div>
+                <div>52周低: $${formatPrice(meta.fiftyTwoWeekLow)}</div>
+                <div>成交量: ${(meta.regularMarketVolume/1e6).toFixed(1)}M</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    function renderChart(symbol, data, color) {
+      const canvas = document.getElementById(`chart-${symbol}`);
+      if (!canvas || !data) return;
+
+      const timestamps = data.timestamp || [];
+      const closes = data.indicators.quote[0].close || [];
+      const labels = timestamps.map(t => {
+        const d = new Date(t * 1000);
+        return `${d.getMonth()+1}/${d.getDate()}`;
+      });
+
+      if (charts[symbol]) charts[symbol].destroy();
+
+      const gradient = canvas.getContext('2d').createLinearGradient(0, 0, 0, 160);
+      gradient.addColorStop(0, color + '40');
+      gradient.addColorStop(1, color + '00');
+
+      charts[symbol] = new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            data: closes,
+            borderColor: color,
+            backgroundColor: gradient,
+            fill: true,
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: {
+              grid: { color: '#1f2937' },
+              ticks: { color: '#6b7280', maxTicksLimit: 6, font: { size: 10 } }
+            },
+            y: {
+              grid: { color: '#1f2937' },
+              ticks: { color: '#6b7280', font: { size: 10 } }
+            }
+          },
+          interaction: { intersect: false, mode: 'index' }
+        }
+      });
+    }
+
+    function renderHoldings(holdingsData) {
+      const container = document.getElementById('holdingsSection');
+      container.innerHTML = '';
+
+      for (const [etfSymbol, config] of Object.entries(ETF_CONFIG)) {
+        let rows = '';
+        for (const h of config.holdings) {
+          const d = holdingsData[h.symbol];
+          if (!d) {
+            rows += `<tr class="border-b border-gray-800">
+              <td class="py-3 px-4 font-medium text-white">${h.symbol}</td>
+              <td class="py-3 px-4 text-gray-400">${h.name}</td>
+              <td class="py-3 px-4 text-gray-500">${h.weight}%</td>
+              <td class="py-3 px-4 text-gray-500">—</td>
+              <td class="py-3 px-4 text-gray-500">—</td>
+              <td class="py-3 px-4 text-gray-500">—</td>
+              <td class="py-3 px-4 text-gray-500">—</td>
+            </tr>`;
+            continue;
+          }
+          const meta = d.meta;
+          const change = formatChange(meta.regularMarketPrice, meta.chartPreviousClose);
+          const colorClass = change.positive ? 'text-green-400' : 'text-red-400';
+          const weekRange = `$${formatPrice(meta.fiftyTwoWeekLow)} - $${formatPrice(meta.fiftyTwoWeekHigh)}`;
+          const vol = meta.regularMarketVolume ? (meta.regularMarketVolume/1e6).toFixed(1)+'M' : '—';
+
+          rows += `<tr class="border-b border-gray-800 hover:bg-gray-800/50 transition">
+            <td class="py-3 px-4 font-medium text-white">${h.symbol}</td>
+            <td class="py-3 px-4 text-gray-300">${h.name}</td>
+            <td class="py-3 px-4 text-gray-400">${h.weight}%</td>
+            <td class="py-3 px-4 text-white font-medium">$${formatPrice(meta.regularMarketPrice)}</td>
+            <td class="py-3 px-4 ${colorClass} font-medium">${change.text} (${change.pct})</td>
+            <td class="py-3 px-4 text-gray-400 text-xs">${weekRange}</td>
+            <td class="py-3 px-4 text-gray-400">${vol}</td>
+          </tr>`;
+        }
+
+        container.innerHTML += `
+          <div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+            <div class="px-5 py-4 border-b border-gray-800 flex items-center gap-3">
+              <span class="w-3 h-3 rounded-full" style="background:${config.color}"></span>
+              <h2 class="text-lg font-semibold text-white">${etfSymbol} · ${config.name}</h2>
+              <span class="text-sm text-gray-500">${config.fullName} — 核心持仓</span>
+            </div>
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-gray-500 text-xs uppercase border-b border-gray-800">
+                  <th class="py-2 px-4 text-left">代码</th>
+                  <th class="py-2 px-4 text-left">公司</th>
+                  <th class="py-2 px-4 text-left">权重</th>
+                  <th class="py-2 px-4 text-left">价格</th>
+                  <th class="py-2 px-4 text-left">涨跌</th>
+                  <th class="py-2 px-4 text-left">52周区间</th>
+                  <th class="py-2 px-4 text-left">成交量</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        `;
+      }
+    }
+
+    async function refreshAll() {
+      const range = document.getElementById('timeRange').value;
+      document.getElementById('lastUpdate').textContent = '加载中...';
+
+      // Collect all unique symbols
+      const allSymbols = new Set(['COPX', 'GRID', 'SMH']);
+      for (const config of Object.values(ETF_CONFIG)) {
+        for (const h of config.holdings) allSymbols.add(h.symbol);
+      }
+
+      // Fetch all in parallel
+      const fetches = {};
+      for (const s of allSymbols) {
+        fetches[s] = fetchChart(s, range);
+      }
+
+      const results = {};
+      for (const [s, p] of Object.entries(fetches)) {
+        results[s] = await p;
+      }
+
+      // Render ETF cards
+      const etfData = { COPX: results.COPX, GRID: results.GRID, SMH: results.SMH };
+      renderETFCards(etfData);
+
+      // Render charts
+      for (const [symbol, config] of Object.entries(ETF_CONFIG)) {
+        renderChart(symbol, results[symbol], config.color);
+      }
+
+      // Render holdings
+      renderHoldings(results);
+
+      const now = new Date();
+      document.getElementById('lastUpdate').textContent = 
+        `更新于 ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
+    }
+
+    // Init
+    document.getElementById('timeRange').addEventListener('change', refreshAll);
+    refreshAll();
+  </script>
+
+</body>
+</html>
